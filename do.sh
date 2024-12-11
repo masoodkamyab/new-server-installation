@@ -27,13 +27,12 @@ fi
 
 # ADMIN_USERS fallback (space-separated)
 if [ -z "${ADMIN_USERS:-}" ]; then
-  read -p "Enter admin usernames (space-separated): " ADMIN_USERS
-fi
-
-
-if [ -z "${ADMIN_USERS}" ]; then
-  echo "No admin users provided. Exiting."
-  exit 1
+  while [ -z "${ADMIN_USERS}" ]; do
+    read -p "Enter admin usernames (space-separated): " ADMIN_USERS
+    if [ -z "${ADMIN_USERS}" ]; then
+      echo "No admin users provided. Please enter at least one admin user."
+    fi
+  done
 fi
 
 
