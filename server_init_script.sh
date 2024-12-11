@@ -1,8 +1,5 @@
 #! /usr/bin/env bash
 
-ENV=`dirname "$(readlink -f "$BASH_SOURCE")"`
-LN="ln -fs"
-
 # Update and upgrade system packages
 read -p "Do you want to run apt update and upgrade? [N/y] "
 if [[ $REPLY =~ ^[Yy]$ ]]; then
