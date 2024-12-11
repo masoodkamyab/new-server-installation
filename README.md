@@ -17,29 +17,10 @@ This project contains a Bash script to initialize a new server with essential co
 ## Usage
 
 1. Clone this repository or copy the script to your local machine.
-2. Make the script executable:
-   ```bash
-   chmod +x server_init_script.sh
-   ```
-3. Run the script:
+2. Run the script:
    ```bash
    ./server_init_script.sh
    ```
-
-## Script Workflow
-
-1. **Update and Upgrade Packages**
-   - Prompts the user to update and upgrade system packages using `apt`.
-2. **Install Vim**
-   - Installs Vim if not already installed.
-   - Sets Vim as the default system editor by updating `/etc/profile.d/editor.sh`.
-3. **Enable VI Editing Mode**
-   - Updates the `.inputrc` file to enable VI editing mode.
-4. **Configure Firewall**
-   - Installs UFW if not already installed.
-   - Allows essential ports for SSH, HTTP, and HTTPS.
-   - Prompts the user to specify additional TCP and UDP ports to allow.
-   - Denies all other ports and enables the firewall.
 
 ## Example Configuration
 
