@@ -19,7 +19,7 @@ This project contains a Bash script to initialize a new server with essential co
 1. Clone this repository or copy the script to your local machine.
 2. Run the script:
    ```bash
-   ./server_init_script.sh
+   ./do.sh
    ```
 
 ## Example Configuration
