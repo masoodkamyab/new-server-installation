@@ -9,7 +9,7 @@ set -euo pipefail
 #####################################
 
 if [ -f vars.sh ]; then
-  . ./vars.sh
+  source ./vars.sh
 fi
 
 
