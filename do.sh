@@ -1,48 +1,72 @@
 #!/usr/bin/env bash
 
 
-set -euo pipefail
-
-
-# Load variables if vars.sh exists
+#####################################
+# Load Variables
+#####################################
 if [ -f vars.sh ]; then
   source ./vars.sh
 fi
 
 
-# If a variable is not defined, prompt the user or set a default.
-# SSH_PORT fallback
+#####################################
+# Prompt Functions
+#####################################
+prompt_nonempty() {
+  # Prompt the user until a non-empty input is provided.
+  local var_name="$1"
+  local prompt_message="$2"
+  local input_value=""
+  while [ -z "${input_value}" ]; do
+    read -p "${prompt_message}: " input_value
+    if [ -z "${input_value}" ]; then
+      echo "Input cannot be empty. Please try again."
+    fi
+  done
+  eval "${var_name}=\"${input_value}\""
+}
+
+
+prompt_password() {
+  # Prompt for a password without echoing.
+  local var_name="$1"
+  local prompt_message="$2"
+  local password=""
+  read -sp "${prompt_message}: " password
+  echo
+  eval "${var_name}=\"${password}\""
+}
+
+
+#####################################
+# Set or Prompt for Required Variables
+#####################################
+# SSH_PORT: default 1111 if not set
 if [ -z "${SSH_PORT:-}" ]; then
   read -p "Enter SSH port [default: 1111]: " input_ssh_port
   SSH_PORT="${input_ssh_port:-1111}"
 fi
 
 
-# PASSWD_ROOT fallback
+# PASSWD_ROOT: prompt if not set
 if [ -z "${PASSWD_ROOT:-}" ]; then
-  read -sp "Enter root password: " PASSWD_ROOT
-  echo
+  prompt_password "PASSWD_ROOT" "Enter root password"
 fi
 
 
-# ADMIN_USERS fallback (space-separated)
+# ADMIN_USERS: prompt until non-empty if not set
 if [ -z "${ADMIN_USERS:-}" ]; then
-  while [ -z "${ADMIN_USERS}" ]; do
-    read -p "Enter admin usernames (space-separated): " ADMIN_USERS
-    if [ -z "${ADMIN_USERS}" ]; then
-      echo "No admin users provided. Please enter at least one admin user."
-    fi
-  done
+  prompt_nonempty "ADMIN_USERS" "Enter admin usernames (space-separated)"
 fi
 
 
-# If PASSWD_ADMIN not provided, prompt for each admin user's password individually
+# Determine admin users' passwords
 admin_users_passwords=()
 if [ -z "${PASSWD_ADMIN:-}" ]; then
+  # Prompt individually for each admin user's password
   echo "No PASSWD_ADMIN set. You will be prompted for each admin user's password."
   for user in $ADMIN_USERS; do
-    read -sp "Enter password for ${user}: " user_pass
-    echo
+    prompt_password "user_pass" "Enter password for ${user}"
     admin_users_passwords+=("${user}:${user_pass}")
   done
 else
@@ -53,6 +77,9 @@ else
 fi
 
 
+#####################################
+# System Update & Setup
+#####################################
 echo "Starting system preparation..."
 apt update
 apt -y dist-upgrade
@@ -60,13 +87,17 @@ apt -y purge ufw
 apt -y install iptables-persistent vim
 
 
-# Set vim as default editor if not already set
+#####################################
+# Set Vim as Default Editor
+#####################################
 if [ ! -f /etc/profile.d/editor.sh ] || ! grep -q "EDITOR=" /etc/profile.d/editor.sh; then
-  echo 'export EDITOR=/usr/bin/vim' | sudo tee /etc/profile.d/editor.sh > /dev/null
+  echo 'export EDITOR=/usr/bin/vim' | tee /etc/profile.d/editor.sh > /dev/null
 fi
 
 
-# Update .inputrc without overwriting existing content
+#####################################
+# Update .inputrc for root (no overwrite)
+#####################################
 if [ ! -f "${HOME}/.inputrc" ]; then
   echo "set editing-mode vi" > "${HOME}/.inputrc"
 else
@@ -76,29 +107,29 @@ else
 fi
 
 
-# Helper function to set authorized keys for a given user
+#####################################
+# Function: Set Authorized Keys
+#####################################
 set_authorized_keys_for_user() {
   local username="$1"
   local home_dir
-  if [ "$username" = "root" ]; then
+
+  if [ "${username}" = "root" ]; then
     home_dir="/root"
   else
     home_dir="/home/${username}"
   fi
 
-  # Look for user-specific authorized keys file
-  user_specific_keys="ssh_authorized_keys_${username}"
-  global_keys="ssh_authorized_keys"
+  # Determine user-specific and global keys files
+  local user_specific_keys="ssh_authorized_keys_${username}"
+  local global_keys="ssh_authorized_keys"
 
   mkdir -p "${home_dir}/.ssh"
   if [ -f "${user_specific_keys}" ]; then
-    # Use user-specific file if exists
     cp "${user_specific_keys}" "${home_dir}/.ssh/authorized_keys"
   elif [ -f "${global_keys}" ]; then
-    # Fall back to global keys file
     cp "${global_keys}" "${home_dir}/.ssh/authorized_keys"
   else
-    # No keys found, create an empty authorized_keys
     echo "Warning: No authorized keys file found for ${username}."
     touch "${home_dir}/.ssh/authorized_keys"
   fi
@@ -109,8 +140,11 @@ set_authorized_keys_for_user() {
 }
 
 
-# Add administrator users and configure them
+#####################################
+# Configure Admin Users
+#####################################
 for user in $ADMIN_USERS; do
+  # Create the admin user if not exists
   if ! id -u "$user" >/dev/null 2>&1; then
     echo "Adding administrator user: ${user}"
     adduser --disabled-password --gecos "" "${user}"
@@ -119,7 +153,7 @@ for user in $ADMIN_USERS; do
     echo "User ${user} already exists, skipping creation."
   fi
 
-  echo "Adding SSH authorized key(s) for user ${user}"
+  echo "Adding SSH authorized keys for ${user}"
   set_authorized_keys_for_user "${user}"
 
   # Update user-specific .inputrc without overwriting
@@ -133,21 +167,24 @@ for user in $ADMIN_USERS; do
   fi
   chown ${user}:${user} "${user_inputrc}"
 
-  # Add sudoers entry if it doesn't exist
+  # Set sudoers entry if not already present
   if [ ! -f "/etc/sudoers.d/${user}" ]; then
-    echo "Updating sudoers.d/${user}"
-    echo "${user} ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/${user}
-    chmod 0440 /etc/sudoers.d/${user}
+    echo "${user} ALL=(ALL) NOPASSWD:ALL" > "/etc/sudoers.d/${user}"
+    chmod 0440 "/etc/sudoers.d/${user}"
   fi
 done
 
 
-# Handle root authorized keys separately
-echo "Adding SSH authorized key(s) for user root"
+#####################################
+# Configure Root Authorized Keys
+#####################################
+echo "Adding SSH authorized keys for root"
 set_authorized_keys_for_user "root"
 
 
-# Set passwords for root and admin users
+#####################################
+# Set Passwords
+#####################################
 echo "Changing passwords..."
 {
   echo "root:${PASSWD_ROOT}"
@@ -157,32 +194,38 @@ echo "Changing passwords..."
 } | chpasswd
 
 
-# Update SSH settings
+#####################################
+# Update SSH Configuration
+#####################################
 sed -i '/^#\?Port/d' /etc/ssh/sshd_config
 sed -i '/^#\?PermitRootLogin/d' /etc/ssh/sshd_config
-sed -i '/ubuntuserver-dofirst/d' /etc/ssh/sshd_config
+sed -i '/ubuntuserver-afterinstall/d' /etc/ssh/sshd_config
+
 echo "" >> /etc/ssh/sshd_config
-echo "# Added by do.sh" >> /etc/ssh/sshd_config
+echo "# Added by ubuntuserver-afterinstall/do.sh" >> /etc/ssh/sshd_config
 echo "Port ${SSH_PORT}" >> /etc/ssh/sshd_config
 echo "PermitRootLogin prohibit-password" >> /etc/ssh/sshd_config
 
 
-# Configure iptables firewall
+#####################################
+# Configure iptables Firewall
+#####################################
 echo "Configuring iptables firewall..."
-
-
-# Iptables
 iptables -F
 iptables -X
 iptables -P INPUT DROP
 iptables -P FORWARD DROP
 iptables -P OUTPUT ACCEPT
 iptables -A INPUT -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+# Allow localhost
 iptables -A INPUT -i lo -j ACCEPT
+
+# Allow SSH on the specified port
 iptables -A INPUT -p tcp --dport ${SSH_PORT} -j ACCEPT
+
+# Allow HTTP/HTTPS
 iptables -A INPUT -p tcp --dport 80 -j ACCEPT
 iptables -A INPUT -p tcp --dport 443 -j ACCEPT
-
 
 # Prompt for additional ports
 read -p "Enter additional TCP ports to allow (space-separated) or leave empty: " tcp_ports
@@ -201,7 +244,9 @@ done
 netfilter-persistent save
 
 
-# Restart SSH to apply changes
+#####################################
+# Restart SSH Service
+#####################################
 systemctl restart sshd
 
 

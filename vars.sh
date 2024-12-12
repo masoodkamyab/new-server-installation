@@ -1,14 +1,15 @@
 #!/usr/bin/env bash
 
+
+# Optional: Predefine any or all of these variables.
+# If they are not set here, the script will prompt for them.
+
+
 SSH_PORT=2222
 PASSWD_ROOT="rootpassword"
-
-# Space-separated list of admin users
-# Example: ADMIN_USERS="adminuser1 adminuser2"
-ADMIN_USERS="adminuser1"
-
-# For admin users, you can set a single password for all of them:
+ADMIN_USERS="adminuser1 adminuser2"
 PASSWD_ADMIN="adminpassword"
 
-AUTH_KEYS_FILE="ssh_authorized_keys"
 
+# No global authorized keys file is mandatory,
+# but if provided, name it: ssh_authorized_keys
