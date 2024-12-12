@@ -259,14 +259,17 @@ iptables -A INPUT -p tcp --dport 443 -j ACCEPT
 echo
 echo "Enter additional TCP ports to allow (space-separated) or leave empty:"
 read input_tcp_ports
-for port in ${input_tcp_ports}; do
+
+# If empty, this loop will simply not run any iterations.
+for port in ${input_tcp_ports:-}; do
   iptables -A INPUT -p tcp --dport "${port}" -j ACCEPT
 done
 
 echo
 echo "Enter additional UDP ports to allow (space-separated) or leave empty:"
 read input_udp_ports
-for port in ${input_udp_ports}; do
+
+for port in ${input_udp_ports:-}; do
   iptables -A INPUT -p udp --dport "${port}" -j ACCEPT
 done
 
