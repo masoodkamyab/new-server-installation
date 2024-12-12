@@ -5,77 +5,85 @@ set -euo pipefail
 
 
 #####################################
-# Load Variables
+# Load Variables (if any)
 #####################################
+
 if [ -f vars.sh ]; then
-  source ./vars.sh
+  . ./vars.sh
 fi
 
 
 #####################################
-# Prompt Functions
+# Determine SSH_PORT
 #####################################
-prompt_nonempty() {
-  # Prompt the user until a non-empty input is provided.
-  local var_name="$1"
-  local prompt_message="$2"
-  local input_value=""
-  while [ -z "${input_value}" ]; do
-    read -p "${prompt_message}: " input_value
-    if [ -z "${input_value}" ]; then
-      echo "Input cannot be empty. Please try again."
-    fi
-  done
-  eval "${var_name}=\"${input_value}\""
-}
 
-
-prompt_password() {
-  # Prompt for a password without echoing.
-  local var_name="$1"
-  local prompt_message="$2"
-  local password=""
-  read -sp "${prompt_message}: " password
-  echo
-  eval "${var_name}=\"${password}\""
-}
-
-
-#####################################
-# Set or Prompt for Required Variables
-#####################################
-# SSH_PORT: default 1111 if not set
 if [ -z "${SSH_PORT:-}" ]; then
-  read -p "Enter SSH port [default: 1111]: " input_ssh_port
-  SSH_PORT="${input_ssh_port:-1111}"
+  echo
+  echo "Enter SSH port [press Enter for default: 1111]:"
+  read input_ssh_port
+  if [ -z "${input_ssh_port}" ]; then
+    SSH_PORT="1111"
+  else
+    SSH_PORT="${input_ssh_port}"
+  fi
 fi
 
 
-# PASSWD_ROOT: prompt if not set
+#####################################
+# Determine PASSWD_ROOT
+#####################################
+
 if [ -z "${PASSWD_ROOT:-}" ]; then
-  prompt_password "PASSWD_ROOT" "Enter root password"
+  echo
+  echo "Enter root password [press Enter for default: rootpassword]:"
+  read -sp "" input_root_pass
+  echo
+  if [ -z "${input_root_pass}" ]; then
+    PASSWD_ROOT="rootpassword"
+  else
+    PASSWD_ROOT="${input_root_pass}"
+  fi
 fi
 
 
-# ADMIN_USERS: prompt until non-empty if not set
+#####################################
+# Determine ADMIN_USERS
+#####################################
+
 if [ -z "${ADMIN_USERS:-}" ]; then
-  prompt_nonempty "ADMIN_USERS" "Enter admin usernames (space-separated)"
+  echo
+  echo "Enter admin usernames (space-separated) [press Enter for default: adminuser]:"
+  read input_admin_users
+  if [ -z "${input_admin_users}" ]; then
+    ADMIN_USERS="adminuser"
+  else
+    ADMIN_USERS="${input_admin_users}"
+  fi
 fi
 
 
-# Determine admin users' passwords
+#####################################
+# Determine PASSWD_ADMIN or prompt individually
+#####################################
+
 admin_users_passwords=()
+
 if [ -z "${PASSWD_ADMIN:-}" ]; then
-  # Prompt individually for each admin user's password
-  echo "No PASSWD_ADMIN set. You will be prompted for each admin user's password."
-  for user in $ADMIN_USERS; do
-    prompt_password "user_pass" "Enter password for ${user}"
-    admin_users_passwords+=("${user}:${user_pass}")
+  echo
+  echo "No PASSWD_ADMIN set. Prompting for each admin user's password."
+  for usr in ${ADMIN_USERS}; do
+    echo
+    echo "Enter password for ${usr} [press Enter for default: adminpassword]:"
+    read -sp "" input_admin_pass
+    echo
+    if [ -z "${input_admin_pass}" ]; then
+      input_admin_pass="adminpassword"
+    fi
+    admin_users_passwords+=("${usr}:${input_admin_pass}")
   done
 else
-  # Use the same password for all admin users
-  for user in $ADMIN_USERS; do
-    admin_users_passwords+=("${user}:${PASSWD_ADMIN}")
+  for usr in ${ADMIN_USERS}; do
+    admin_users_passwords+=("${usr}:${PASSWD_ADMIN}")
   done
 fi
 
@@ -83,30 +91,43 @@ fi
 #####################################
 # System Update & Setup
 #####################################
+
+echo
 echo "Starting system preparation..."
+
 apt update
 apt -y dist-upgrade
 apt -y purge ufw
 
-
-# Pre-answer iptables-persistent prompts
 export DEBIAN_FRONTEND=noninteractive
-echo iptables-persistent iptables-persistent/autosave_v4 boolean true | debconf-set-selections
-echo iptables-persistent iptables-persistent/autosave_v6 boolean true | debconf-set-selections
-apt -y install iptables-persistent vim
+
+echo "iptables-persistent iptables-persistent/autosave_v4 boolean true" > /tmp/ip4.conf
+debconf-set-selections < /tmp/ip4.conf
+
+echo "iptables-persistent iptables-persistent/autosave_v6 boolean true" > /tmp/ip6.conf
+debconf-set-selections < /tmp/ip6.conf
+
+apt -y install iptables-persistent
+apt -y install vim
 
 
 #####################################
 # Set Vim as Default Editor
 #####################################
-if [ ! -f /etc/profile.d/editor.sh ] || ! grep -q "EDITOR=" /etc/profile.d/editor.sh; then
-  echo 'export EDITOR=/usr/bin/vim' | tee /etc/profile.d/editor.sh > /dev/null
+
+if [ ! -f /etc/profile.d/editor.sh ]; then
+  echo 'export EDITOR=/usr/bin/vim' > /etc/profile.d/editor.sh
+fi
+
+if ! grep -q "EDITOR=" /etc/profile.d/editor.sh; then
+  echo 'export EDITOR=/usr/bin/vim' >> /etc/profile.d/editor.sh
 fi
 
 
 #####################################
-# Update .inputrc for root (no overwrite)
+# Update .inputrc for root
 #####################################
+
 if [ ! -f "${HOME}/.inputrc" ]; then
   echo "set editing-mode vi" > "${HOME}/.inputrc"
 else
@@ -117,56 +138,39 @@ fi
 
 
 #####################################
-# Function: Set Authorized Keys
+# Configure Admin Users and Their SSH Keys
 #####################################
-set_authorized_keys_for_user() {
-  local username="$1"
-  local home_dir
 
-  if [ "${username}" = "root" ]; then
+for usr in ${ADMIN_USERS}; do
+  id -u "${usr}" >/dev/null 2>&1 || {
+    echo
+    echo "Adding administrator user: ${usr}"
+    adduser --disabled-password --gecos "" "${usr}"
+    adduser "${usr}" sudo
+  }
+
+  home_dir="/home/${usr}"
+  if [ "${usr}" = "root" ]; then
     home_dir="/root"
-  else
-    home_dir="/home/${username}"
   fi
-
-  # Determine user-specific and global keys files
-  local user_specific_keys="ssh_authorized_keys_${username}"
-  local global_keys="ssh_authorized_keys"
 
   mkdir -p "${home_dir}/.ssh"
-  if [ -f "${user_specific_keys}" ]; then
-    cp "${user_specific_keys}" "${home_dir}/.ssh/authorized_keys"
-  elif [ -f "${global_keys}" ]; then
-    cp "${global_keys}" "${home_dir}/.ssh/authorized_keys"
+
+  if [ -f "ssh_authorized_keys_${usr}" ]; then
+    cp "ssh_authorized_keys_${usr}" "${home_dir}/.ssh/authorized_keys"
   else
-    echo "Warning: No authorized keys file found for ${username}."
-    touch "${home_dir}/.ssh/authorized_keys"
+    if [ -f "ssh_authorized_keys" ]; then
+      cp "ssh_authorized_keys" "${home_dir}/.ssh/authorized_keys"
+    else
+      touch "${home_dir}/.ssh/authorized_keys"
+    fi
   fi
 
-  chown -R ${username}:${username} "${home_dir}/.ssh"
+  chown -R ${usr}:${usr} "${home_dir}/.ssh"
   chmod 700 "${home_dir}/.ssh"
   chmod 600 "${home_dir}/.ssh/authorized_keys"
-}
 
-
-#####################################
-# Configure Admin Users
-#####################################
-for user in $ADMIN_USERS; do
-  # Create the admin user if not exists
-  if ! id -u "$user" >/dev/null 2>&1; then
-    echo "Adding administrator user: ${user}"
-    adduser --disabled-password --gecos "" "${user}"
-    adduser "${user}" sudo
-  else
-    echo "User ${user} already exists, skipping creation."
-  fi
-
-  echo "Adding SSH authorized keys for ${user}"
-  set_authorized_keys_for_user "${user}"
-
-  # Update user-specific .inputrc without overwriting
-  user_inputrc="/home/${user}/.inputrc"
+  user_inputrc="${home_dir}/.inputrc"
   if [ ! -f "${user_inputrc}" ]; then
     echo "set editing-mode vi" > "${user_inputrc}"
   else
@@ -174,12 +178,12 @@ for user in $ADMIN_USERS; do
       echo "set editing-mode vi" >> "${user_inputrc}"
     fi
   fi
-  chown ${user}:${user} "${user_inputrc}"
 
-  # Set sudoers entry if not already present
-  if [ ! -f "/etc/sudoers.d/${user}" ]; then
-    echo "${user} ALL=(ALL) NOPASSWD:ALL" > "/etc/sudoers.d/${user}"
-    chmod 0440 "/etc/sudoers.d/${user}"
+  chown ${usr}:${usr} "${user_inputrc}"
+
+  if [ ! -f "/etc/sudoers.d/${usr}" ]; then
+    echo "${usr} ALL=(ALL) NOPASSWD:ALL" > "/etc/sudoers.d/${usr}"
+    chmod 0440 "/etc/sudoers.d/${usr}"
   fi
 done
 
@@ -187,25 +191,42 @@ done
 #####################################
 # Configure Root Authorized Keys
 #####################################
-echo "Adding SSH authorized keys for root"
-set_authorized_keys_for_user "root"
+
+root_home="/root"
+mkdir -p "${root_home}/.ssh"
+
+if [ -f "ssh_authorized_keys_root" ]; then
+  cp "ssh_authorized_keys_root" "${root_home}/.ssh/authorized_keys"
+else
+  if [ -f "ssh_authorized_keys" ]; then
+    cp "ssh_authorized_keys" "${root_home}/.ssh/authorized_keys"
+  else
+    touch "${root_home}/.ssh/authorized_keys"
+  fi
+fi
+
+chown -R root:root "${root_home}/.ssh"
+chmod 700 "${root_home}/.ssh"
+chmod 600 "${root_home}/.ssh/authorized_keys"
 
 
 #####################################
 # Set Passwords
 #####################################
+
+echo
 echo "Changing passwords..."
-{
-  echo "root:${PASSWD_ROOT}"
-  for entry in "${admin_users_passwords[@]}"; do
-    echo "${entry}"
-  done
-} | chpasswd
+echo "root:${PASSWD_ROOT}" > /tmp/passwords.txt
+for entry in "${admin_users_passwords[@]}"; do
+  echo "${entry}" >> /tmp/passwords.txt
+done
+chpasswd < /tmp/passwords.txt
 
 
 #####################################
 # Update SSH Configuration
 #####################################
+
 sed -i '/^#\?Port/d' /etc/ssh/sshd_config
 sed -i '/^#\?PermitRootLogin/d' /etc/ssh/sshd_config
 sed -i '/ubuntuserver-afterinstall/d' /etc/ssh/sshd_config
@@ -219,45 +240,52 @@ echo "PermitRootLogin prohibit-password" >> /etc/ssh/sshd_config
 #####################################
 # Configure iptables Firewall
 #####################################
+
+echo
 echo "Configuring iptables firewall..."
+
 iptables -F
 iptables -X
 iptables -P INPUT DROP
 iptables -P FORWARD DROP
 iptables -P OUTPUT ACCEPT
+
 iptables -A INPUT -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
-# Allow localhost
 iptables -A INPUT -i lo -j ACCEPT
-
-# Allow SSH on the specified port
-iptables -A INPUT -p tcp --dport ${SSH_PORT} -j ACCEPT
-
-# Allow HTTP/HTTPS
+iptables -A INPUT -p tcp --dport "${SSH_PORT}" -j ACCEPT
 iptables -A INPUT -p tcp --dport 80 -j ACCEPT
 iptables -A INPUT -p tcp --dport 443 -j ACCEPT
 
-# Prompt for additional ports
-read -p "Enter additional TCP ports to allow (space-separated) or leave empty: " tcp_ports
-for port in $tcp_ports; do
-  iptables -A INPUT -p tcp --dport ${port} -j ACCEPT
+echo
+echo "Enter additional TCP ports to allow (space-separated) or leave empty:"
+read input_tcp_ports
+for port in ${input_tcp_ports}; do
+  iptables -A INPUT -p tcp --dport "${port}" -j ACCEPT
 done
 
-
-read -p "Enter additional UDP ports to allow (space-separated) or leave empty: " udp_ports
-for port in $udp_ports; do
-  iptables -A INPUT -p udp --dport ${port} -j ACCEPT
+echo
+echo "Enter additional UDP ports to allow (space-separated) or leave empty:"
+read input_udp_ports
+for port in ${input_udp_ports}; do
+  iptables -A INPUT -p udp --dport "${port}" -j ACCEPT
 done
 
-
-# Save firewall rules
 netfilter-persistent save
 
 
 #####################################
 # Restart SSH Service
 #####################################
+
+echo
+echo "Restarting SSH service..."
 systemctl restart sshd
 
 
-echo "Server initialization completed successfully."
+#####################################
+# Done
+#####################################
 
+echo
+echo "Server initialization completed successfully."
+echo
